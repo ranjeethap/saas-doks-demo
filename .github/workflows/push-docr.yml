@@ -1,0 +1,17 @@
+name: Push to DOCR
+on: workflow_dispatch
+jobs:
+  push:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: digitalocean/action-doctl@v2
+        with: { token: ${{ secrets.DO_TOKEN }} }
+      - run: doctl registry login
+      - uses: docker/setup-buildx-action@v3
+      - run: |
+          APP_IMAGE=registry.digitalocean.com/dokr-saas/doks-flask
+          TAG=${{ github.sha }}
+          docker build -t $APP_IMAGE:$TAG -t $APP_IMAGE:latest .
+          docker push $APP_IMAGE:$TAG
+

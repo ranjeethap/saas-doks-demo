@@ -1,0 +1,71 @@
+name: CI-CD DOKS (Build -> DOCR -> Dev -> Manual Prod)
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+env:
+  APP_IMAGE: registry.digitalocean.com/${{ secrets.DOCR_REGISTRY }}/doks-flask
+
+jobs:
+  build_and_push:
+    runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.meta.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install doctl
+        uses: digitalocean/action-doctl@v2
+        with:
+          token: ${{ secrets.DO_TOKEN }}
+      - name: Login to DOCR
+        run: doctl registry login
+      - name: Compute image tag
+        id: meta
+        run: echo "sha=${GITHUB_SHA}" >> $GITHUB_OUTPUT
+      - uses: docker/setup-buildx-action@v3
+      - name: Build & push image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ env.APP_IMAGE }}:${{ steps.meta.outputs.sha }}
+            ${{ env.APP_IMAGE }}:latest
+
+  deploy_dev:
+    needs: build_and_push
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install doctl
+        uses: digitalocean/action-doctl@v2
+        with:
+          token: ${{ secrets.DO_TOKEN }}
+      - name: Kubeconfig
+        run: doctl kubernetes cluster kubeconfig save "${{ secrets.DO_CLUSTER }}"
+      - name: Apply dev manifests
+        run: |
+          kubectl apply -f k8s/dev/deploy.yaml
+          kubectl -n dev set image deployment/doks-flask app=${{ env.APP_IMAGE }}:${{ needs.build_and_push.outputs.sha }}
+          kubectl -n dev rollout status deployment/doks-flask --timeout=180s
+
+  promote_to_prod:
+    needs: deploy_dev
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install doctl
+        uses: digitalocean/action-doctl@v2
+        with:
+          token: ${{ secrets.DO_TOKEN }}
+      - name: Kubeconfig
+        run: doctl kubernetes cluster kubeconfig save "${{ secrets.DO_CLUSTER }}"
+      - name: Apply prod manifests
+        run: |
+          kubectl apply -f k8s/prod/deploy.yaml
+          kubectl -n prod set image deployment/doks-flask app=${{ env.APP_IMAGE }}:${{ needs.build_and_push.outputs.sha }}
+          kubectl -n prod rollout status deployment/doks-flask --timeout=180s
+

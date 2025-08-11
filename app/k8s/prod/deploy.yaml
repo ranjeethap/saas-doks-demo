@@ -1,0 +1,64 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: doks-flask
+  namespace: prod
+spec:
+  replicas: 3
+  selector:
+    matchLabels: { app: doks-flask }
+  template:
+    metadata:
+      labels: { app: doks-flask }
+    spec:
+      imagePullSecrets:
+        - name: do-docr-secret
+      containers:
+      - name: app
+        image: registry.digitalocean.com/dokr-saas/doks-flask:latest
+        ports: [{ containerPort: 8080 }]
+        env:
+        - { name: PORT, value: "8080" }
+        - { name: APP_VERSION, value: "prod" }
+        readinessProbe:
+          httpGet: { path: /healthz, port: 8080 }
+          initialDelaySeconds: 3
+          periodSeconds: 5
+        livenessProbe:
+          httpGet: { path: /healthz, port: 8080 }
+          initialDelaySeconds: 10
+          periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: doks-flask-svc
+  namespace: prod
+spec:
+  type: LoadBalancer
+  selector: { app: doks-flask }
+  ports:
+  - name: http
+    port: 80
+    targetPort: 8080
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: doks-flask-hpa
+  namespace: prod
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: doks-flask
+  minReplicas: 3
+  maxReplicas: 10
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 60
+
