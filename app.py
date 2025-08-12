@@ -3,7 +3,7 @@ app = Flask(__name__)
 
 @app.route('/')
 def hello():
-    return "Hello from Flask on DOKS v4!"
+    return "Hello from Flask on DOKS v5!"
 
 @app.route('/healthz')
 def health():
