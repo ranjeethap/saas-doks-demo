@@ -15,16 +15,21 @@ jobs:
       sha: ${{ steps.meta.outputs.sha }}
     steps:
       - uses: actions/checkout@v4
+
       - name: Install doctl
         uses: digitalocean/action-doctl@v2
         with:
           token: ${{ secrets.DO_TOKEN }}
+
       - name: Login to DOCR
         run: doctl registry login
+
       - name: Compute image tag
         id: meta
-        run: echo "sha=${GITHUB_SHA}" >> $GITHUB_OUTPUT
+        run: echo "sha=${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+
       - uses: docker/setup-buildx-action@v3
+
       - name: Build & push image
         uses: docker/build-push-action@v6
         with:
@@ -39,44 +44,48 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
       - name: Install doctl
         uses: digitalocean/action-doctl@v2
         with:
           token: ${{ secrets.DO_TOKEN }}
+
       - name: Kubeconfig
         run: doctl kubernetes cluster kubeconfig save "${{ secrets.DO_CLUSTER }}"
+
       - name: Apply dev manifests
         run: |
           kubectl apply -f k8s/dev/deploy.yaml
           kubectl -n dev set image deployment/doks-flask app=${{ env.APP_IMAGE }}:${{ needs.build_and_push.outputs.sha }}
           kubectl -n dev rollout status deployment/doks-flask --timeout=180s
+
   promote_to_prod:
-  # ⬇️ make prod depend on BOTH jobs so it can read the SHA output
-  needs: [build_and_push, deploy_dev]
-  runs-on: ubuntu-latest
-  environment: production
-  steps:
-    - uses: actions/checkout@v4
-    - name: Install doctl
-      uses: digitalocean/action-doctl@v2
-      with:
-        token: ${{ secrets.DO_TOKEN }}
-    - name: Kubeconfig
-      run: doctl kubernetes cluster kubeconfig save "${{ secrets.DO_CLUSTER }}"
+    needs: [build_and_push, deploy_dev]
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
 
-    # ⬇️ guard: fail fast if SHA is missing
-    - name: Assert image SHA present
-      run: |
-        if [ -z "${{ needs.build_and_push.outputs.sha }}" ]; then
-          echo "ERROR: Missing image SHA from build_and_push.outputs.sha"
-          exit 1
-        fi
-        echo "Using SHA: ${{ needs.build_and_push.outputs.sha }}"
+      - name: Install doctl
+        uses: digitalocean/action-doctl@v2
+        with:
+          token: ${{ secrets.DO_TOKEN }}
 
-    - name: Apply prod manifests
-      run: |
-        kubectl apply -f k8s/prod/deploy.yaml
-        kubectl -n prod set image deployment/doks-flask \
-          app=registry.digitalocean.com/${{ secrets.DOCR_REGISTRY }}/doks-flask:${{ needs.build_and_push.outputs.sha }}
-        kubectl -n prod rollout status deployment/doks-flask --timeout=180s
+      - name: Kubeconfig
+        run: doctl kubernetes cluster kubeconfig save "${{ secrets.DO_CLUSTER }}"
+
+      - name: Assert image SHA present
+        run: |
+          if [ -z "${{ needs.build_and_push.outputs.sha }}" ]; then
+            echo "ERROR: Missing image SHA from build_and_push.outputs.sha"
+            exit 1
+          fi
+          echo "Using SHA: ${{ needs.build_and_push.outputs.sha }}"
+
+      - name: Apply prod manifests
+        run: |
+          kubectl apply -f k8s/prod/deploy.yaml
+          kubectl -n prod set image deployment/doks-flask \
+            app=${{ env.APP_IMAGE }}:${{ needs.build_and_push.outputs.sha }}
+          kubectl -n prod rollout status deployment/doks-flask --timeout=180s
 
